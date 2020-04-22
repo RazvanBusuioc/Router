@@ -1,0 +1,196 @@
+                Protocoale de Comunicatii
+           -Procesul de dirijare a packetelor-
+                        -Tema 1-
+                                                        Busuioc Gabriel-Razvan
+                                                                         324CB
+
+        I.Fisiere sursa. Fisiere header
+
+    Tema contine urmatoarele fisiere sursa + header:
+-skel.c - skel.h
+-list.c - list.h
+-queue.c - queue.h
+-tables.c - tables.h
+-packets.c - packets.h
+-router.c
+
+
+            --tables.c si tables.h--
+
+    Fisierul header contine implementarea si declararea structurii tabelei de
+rutare si a tabelei ARP impreuna cu lungimile aferente cat si a cozii de 
+stocare a packetelor in asteptare. De asemenea, headerul contine implementarea
+si declararea unei structuri "mask_numerator" ce ajuta la numararea mastilor
+de un anumit tip din tabela de rutare. Spre exemplu, o tabela de rutare poate
+avea 62000 de masti /24, 4 masti /25, etc. In implementare am folosit un vector
+de astfel de structuri, de lungime 32(maximul de biti al unei masti) cu scopul
+de a facilita cautarea binara in tabela de rutare.
+
+        Fisierul .c contine implementare functiilor de citire, stocare si
+cautare a datelor in/din tabela de rutare si tabela ARP. De asemenea fisierul
+contine functii de actualizare a numaratorului de masti;
+
+    1.Functii petru tabela de rutare--
+
+-In functia "read_rtable" datele sunt citite din fisier, stocate si ordonate
+descrescator in functie de mask sau prefix(in cazul mastilor egale).
+
+-Functia "get_best_route" intoarce intrarea cu cea mai mare masca din tabela
+de rutare care face match pe adresa IP data ca parametru. Functia apeleaza
+o functia "search_by_mask"
+
+-Functia  "search_by_mask" apeleaza functia de cautare binara pe intervalele de
+masti egale din tabela de rutare. In acest fel, se porneste de la intervalul cu
+masca cea mai mare spre intervalul cu masca cea mai mica, deci se va gasi 
+intrarea din tabela conform "longest prefix match".
+
+-Funcita "binary_search" realizeaza o cautare binara a unei adrese IP in 
+o parte a tabelei de rutare. O obervatie importanta este faptul ca partea a
+tabelei in care se cauta are toate mastile egale, cautarea facandu-se practic
+dupa prefix. In cazul in care la pasul curent prefixul gasit este mai mic decat
+(IP & mask) se cauta in partea stanga a tabelei/vectorului si in caz contrar se
+cauta in partea dreapta a tabelei/vectorului.
+
+
+    2.FUnctii pentru tabela ARP
+
+-Functia "add_arp_entry" stocheaza date in tabela ARP
+
+-Functia "get_arp_entry" returneaza o intrare din tabela ARP specifica adresei
+IP pasate ca parametru
+
+
+    3.Functii de lucru pe numaratorul de masti
+-Functia "increase_mask_numerator" primeste o masca parametru si incrementeaza
+numarul de masti de acel tip din tabela de rutare. Numarul de masti este stocat
+astfel: mask_num[0] = mastile /32
+        mask_num[1] = mastile /31
+        .........................
+        mask_num[31] = mastile /1
+
+
+
+        --packets.c si packets.h--
+
+    Aceste fisiere contin functiile de creeare si stocare a packetelor
+
+-Functia "build_arp_request_pck" construieste de la 0 un packet de tipul ARP
+Request setand toate field-urile din headerele Ethernet si headerul ARP. 
+Functia primeste headerul IP al packetului primit(packetul a carui dirijare 
+necesita acest ARP Request) pentru a completa fieldul de target IP din headerul
+de ARP al packetului ce se vrea construit.
+
+-Functia "build_ICMP_packet" contruieste de la 0 cu packet ICMP de tipul dat
+ca parametru setand toate fieldurile din headerele Ether, IP si ICMP. Functia
+primeste packetul primit de router(packetul a carui dirijare necesita
+constructia acestui packet ICMP) pentru a seta fieldurile de destinatie IP si
+MAC din headerele IP si Ethernet.
+
+-Functia "send_waiting_packets" scoate rand pe rand packetele din coada de 
+packete netrimise si in cazul in care exista o intrare in tabela ARP valida
+pentru packetul respectiv, acesta este dirijat mai departe catre destinatie.
+In cazul in care inca nu s-a gasit o intrare in tabela ARP, packetul este
+introdus din nou in coada.
+
+
+
+        --router.c--
+    
+    In acest fisier se afla functia main. Aici se porneste routerul, iar acesta
+asteapta intr-o bucla infinita sa primeasca packete.
+Cand un packet este primit, este inspectat headerul Ethernet:
+-Daca este un packet de tip ARP se verifica tipul de arp:
+{
+--Daca este un packet ARP Request destinat routerului, routerul modifica
+headerele packetului primit pentru a il transforma intr-un packet ARP Reply
+inversand practiv adresele MAC (noul sender va fi vechea destinatie si 
+vice-versa). Packetul modificat este dirijat mai departe catre cea mai buna
+ruta.
+--Daca este un packet de tip ARP Reply, routerul introduce informatia
+despre destinatar in tabela ARP si apeleaza functia de trimitere a packetelor
+in asteptare.
+}
+-Daca este un packet de tip IP:
+{
+--In cazul in care este un packet de tipul ICMP Request catre router, routerul
+verifica daca packetul este corupt. In cazul in care acesta este corupt
+(checksum gresit, ttl <= 1), packetul este aruncat. In caz contrar, headerul
+ICMP Request al packetului este modificat intr-un header ICMP Reply si este
+reactualizat checksumul headerului ICMP. In cadrul headerelor Ethernet si IP
+sunt modificate adresele destinatie si sursa. Packetul nou obtinut este dirijat
+catre cea mai buna ruta.
+--In cazul in care nu este un packet ICMP Request catre router, routerul face
+urmatoarele:
+    {
+---Verifica checksumul packetului. In caz de packet corupt, acesta este aruncat
+---Decrementeaza ttl si verifica daca acesta este > 0. In caz contrar, se
+creeaza un packet ICMP time exceeded care se dirijeaza pe cea mai buna ruta
+catre packetul primit initial
+---Modifica checksumul dupa decrementarea ttl folosind algoritmul incremental
+din RFC 1141 
+---Verifica daca exista o ruta valida in tabela de rutare pentru destinatia
+packetului. In caz contrar, se creeaza un packet ICMP destination unreachable
+care se dirijeaza pe cea mai buna ruta catre packetul primit initial.
+---Se verifica daca exista o intrare valida in tabela ARP pentru adresa IP
+destinatie a packetului primit. In cazul in care exista, se modifica headerul
+Ethernet al packetului (sursa si destinatia MAC) si se dirijeaza packetul catre
+cea mai buna ruta. In caz contrar, packetul primit se copiaza si se stocheaza
+in coada de asteptare in timp ce routerul trimite un ARP Request pe interfata
+destinatie a packetului initial.
+    }
+}
+
+
+
+        II. Complexitati ale algoritmilor
+
+    1.Parsarea si Sortarea tabelei de rutare
+Dupa parsarea tabelei de rutare, se aplica un algoritm de qsort care sorteaza
+tabela in ordine descrescatoare a mastilor, iar in cazul mastilor egale se 
+sorteaza in ordine descrescatoare a prefixelor. Asadar, complexitatea
+algoritmului de parsare a tabelei de rutare este Theta(n) + O(nlogn) = O(nlogn)
+
+    2. Cautarea in tabela de rutare
+Cautarea in tabela de rutare se face pe bucati de masti egale de la mastile
+mari spre cele mici(e.g. prima cautare parcure mastile /29 -> ultima cautare se
+face pe mastile /24). Asadar se aplica un algoritm de cautare binara de
+complexitate O(logk) pe fiecare chunk de masti egale unde k reprezinta lungimea
+chunkului respectiv.
+In cel mai bun caz, tabela de rutare contine o singura masca, lucru care ar
+rezulta intr-o complexitate de O(logn) a algoritmului deoarece cautarea binara
+se face o singura data pe intreaga tabela.
+In cel mai rau caz, tabela de rutare contine toate mastile posibile(/1 -> /32)
+si fiecare set de masti are aceeasi lungime(e.g. in tabela de rutare exista 
+k = 32 bucati de masca /x cu x = 1:32, fiecare bucata avand lungimea n/k). 
+Asadar, complexitatea algoritmului in acest caz ar fi urmatoare:
+T(n) = log(n/k) + log(n/k) + ... log(n/k) <- de k ordine
+T(n) = k * log(n/k) = k *(log(n) - log(k)) =>
+T(n) = O(logn)
+
+
+
+        III. Bibliografie
+https://ocw.cs.pub.ro/courses/pc/laboratoare/04
+https://ocw.cs.pub.ro/courses/pc/laboratoare/05
+https://unix.superglobalmegacorp.com/NetBSD-0.8/newsrc/netinet/if_ether.h.html
+https://unix.superglobalmegacorp.com/Net2/newsrc/netinet/ip.h.html
+https://tools.ietf.org/html/rfc1141 <- algoritm incremental checksum
+https://tools.ietf.org/html/rfc1624 <- algoritm incremental checksum
+
+
+
+        IV. Probleme intampinate si feedback
+
+    Aceasta tema m-a ajutat sa inteleg mult mai bine bazele forwardingului si
+partea de fata-plane a unui router. De asemenea, am invatat destul de bine
+scopul si functionalitate protooalelor din cadrul temei, dar si continutul 
+headerelor acestor protocoale. Am intapinat probleme la completarea headerelor
+din packete(in mare parte si din cauza neatentiei xD) si la gasirea unui 
+algoritm optim de cautre in tabela de rutare.
+
+   Feedbackul meu in legatura cu organizarea si tema in sine este unul pozitiv.
+Chiar daca nu a fost asa usoara si a starnit multe discutii pe forum, am 
+invatat lucruri si concepte noi ce sigur ma vor ajuta in viitor. Timpul a fost
+mai mult decat suficient, iar asistentii care s-au ocupat de tema au raspuns
+intrebarilor de pe forum in cel mai scurt timp posibil.
+Keep up the good work!
